@@ -1,0 +1,29 @@
+name: Publish Nivora Evolution Go pool fix
+
+on:
+  push:
+    branches: [fix/nivora-pool-0.7.2]
+    paths:
+      - .github/workflows/publish-nivora-poolfix.yml
+      - Dockerfile
+      - go.mod
+      - go.sum
+      - pkg/whatsmeow/service/**
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Name immutable image
+        run: echo "IMAGE=ghcr.io/faridamagua/evolution-go:0.7.2-poolfix-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+      - name: Log in to GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Build image for the production server
+        run: docker build --platform linux/amd64 --build-arg VERSION=0.7.2 -t "$IMAGE" .
+      - name: Publish image
+        run: docker push "$IMAGE"
