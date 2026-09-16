@@ -97,6 +97,34 @@ type whatsmeowService struct {
 	natsProducer       producer_interfaces.Producer
 	loggerWrapper      *logger_wrapper.LoggerManager
 	passkeyCeremony    *ceremony.Store
+	authStore          *sharedAuthStore
+}
+
+// Keep one WhatsApp authentication database pool per service, rather than
+// opening another pool every time an instance starts or reconnects.
+type sharedAuthStore struct {
+	mu        sync.Mutex
+	container *sqlstore.Container
+}
+
+func (s *sharedAuthStore) getOrCreate(create func() (*sqlstore.Container, error)) (*sqlstore.Container, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.container != nil {
+		return s.container, nil
+	}
+	container, err := create()
+	if err != nil {
+		return nil, err
+	}
+	s.container = container
+	return container, nil
+}
+
+func (s *sharedAuthStore) newDevice() *store.Device {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.container.NewDevice()
 }
 
 type MyClient struct {
@@ -314,24 +342,17 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 		}
 	}
 
-	var container *sqlstore.Container
-
-	if w.config.WaDebug != "" {
-		dbLog := waLog.Stdout("Database", w.config.WaDebug, true)
-		if w.config.PostgresAuthDB != "" {
-			container, err = sqlstore.New(context.Background(), "postgres", w.config.PostgresAuthDB, dbLog)
-		} else {
-			dsn := fmt.Sprintf("file:%s/dbdata/main.db?_pragma=foreign_keys(1)&_busy_timeout=5000&cache=shared&mode=rwc&_journal_mode=WAL", w.exPath)
-			container, err = sqlstore.New(context.Background(), "sqlite", dsn, dbLog)
+	container, err := w.authStore.getOrCreate(func() (*sqlstore.Container, error) {
+		var dbLog waLog.Logger
+		if w.config.WaDebug != "" {
+			dbLog = waLog.Stdout("Database", w.config.WaDebug, true)
 		}
-	} else {
 		if w.config.PostgresAuthDB != "" {
-			container, err = sqlstore.New(context.Background(), "postgres", w.config.PostgresAuthDB, nil)
-		} else {
-			dsn := fmt.Sprintf("file:%s/dbdata/main.db?_pragma=foreign_keys(1)&_busy_timeout=5000&cache=shared&mode=rwc&_journal_mode=WAL", w.exPath)
-			container, err = sqlstore.New(context.Background(), "sqlite", dsn, nil)
+			return sqlstore.New(context.Background(), "postgres", w.config.PostgresAuthDB, dbLog)
 		}
-	}
+		dsn := fmt.Sprintf("file:%s/dbdata/main.db?_pragma=foreign_keys(1)&_busy_timeout=5000&cache=shared&mode=rwc&_journal_mode=WAL", w.exPath)
+		return sqlstore.New(context.Background(), "sqlite", dsn, dbLog)
+	})
 
 	if err != nil {
 		w.loggerWrapper.GetLogger(cd.Instance.Id).LogError("[%s] Failed to create container: %v", cd.Instance.Id, err)
@@ -348,12 +369,12 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 		}
 	} else {
 		w.loggerWrapper.GetLogger(cd.Instance.Id).LogWarn("[%s] No jid found. Creating new device", cd.Instance.Id)
-		deviceStore = container.NewDevice()
+		deviceStore = w.authStore.newDevice()
 	}
 
 	if deviceStore == nil {
 		w.loggerWrapper.GetLogger(cd.Instance.Id).LogWarn("[%s] No store found. Creating new one", cd.Instance.Id)
-		deviceStore = container.NewDevice()
+		deviceStore = w.authStore.newDevice()
 
 		cd.Instance.Connected = false
 		err := w.instanceRepository.UpdateConnected(cd.Instance.Id, cd.Instance.Connected, cd.Instance.DisconnectReason)
@@ -2831,6 +2852,7 @@ func NewWhatsmeowService(
 		natsProducer:       natsProducer,
 		loggerWrapper:      loggerWrapper,
 		passkeyCeremony:    ceremony.NewStore(),
+		authStore:          &sharedAuthStore{},
 	}
 }
 
