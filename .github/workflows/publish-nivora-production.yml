@@ -1,0 +1,30 @@
+name: Publish Evolution Go image for Nivora
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-nivora-production.yml
+      - Dockerfile
+      - go.mod
+      - go.sum
+      - pkg/instance/service/**
+      - pkg/whatsmeow/service/**
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Name immutable production image
+        run: echo "IMAGE=ghcr.io/faridamagua/evolution-go:0.7.2-nivora-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+      - name: Log in to GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Build production image
+        run: docker build --platform linux/amd64 --build-arg VERSION=0.7.2 -t "$IMAGE" .
+      - name: Publish production image
+        run: docker push "$IMAGE"
