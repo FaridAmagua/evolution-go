@@ -315,19 +315,24 @@ func (i instances) Disconnect(instance *instance_model.Instance) (*instance_mode
 	}
 
 	if client.IsConnected() {
-		if client.IsLoggedIn() {
-			i.loggerWrapper.GetLogger(instance.Id).LogInfo("[%s] Disconnection successful", instance.Id)
-			i.killChannel[instance.Id] <- true
+		i.loggerWrapper.GetLogger(instance.Id).LogInfo("[%s] Stopping connection (logged in: %v)", instance.Id, client.IsLoggedIn())
+		instance.Events = ""
+		instance.Connected = false
 
-			instance.Events = ""
-
-			err := i.instanceRepository.Update(instance)
-			if err != nil {
-				return instance, err
+		if killChannel := i.killChannel[instance.Id]; killChannel != nil {
+			select {
+			case killChannel <- true:
+			case <-time.After(5 * time.Second):
+				client.Disconnect()
 			}
-
-			return instance, nil
+		} else {
+			client.Disconnect()
 		}
+
+		if err := i.instanceRepository.Update(instance); err != nil {
+			return instance, err
+		}
+		return instance, nil
 	}
 
 	i.loggerWrapper.GetLogger(instance.Id).LogWarn("[%s] Ignoring disconnect as it was not connected", instance.Id)
