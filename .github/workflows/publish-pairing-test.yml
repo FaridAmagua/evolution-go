@@ -1,0 +1,29 @@
+name: Publish Evolution Go pairing test image
+
+on:
+  push:
+    branches: [fix/nivora-pairing-test]
+    paths:
+      - .github/workflows/publish-pairing-test.yml
+      - Dockerfile
+      - go.mod
+      - go.sum
+      - pkg/whatsmeow/service/**
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Name immutable test image
+        run: echo "IMAGE=ghcr.io/faridamagua/evolution-go:0.7.2-pairing-test-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+      - name: Log in to GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Build test image
+        run: docker build --platform linux/amd64 --build-arg VERSION=0.7.2-pairing-test -t "$IMAGE" .
+      - name: Publish test image
+        run: docker push "$IMAGE"
