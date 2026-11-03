@@ -76,6 +76,22 @@ type clientVersion struct {
 	Patch int
 }
 
+// WhatsApp's handshake reads the package-level whatsmeow version, not only
+// DeviceProps.Version. StartClient runs once per instance, so serialize writes.
+var waVersionMu sync.Mutex
+
+func applyWAVersion(v clientVersion) {
+	if v.Major <= 0 || v.Minor <= 0 || v.Patch <= 0 {
+		return
+	}
+
+	waVersionMu.Lock()
+	defer waVersionMu.Unlock()
+	store.SetWAVersion(store.WAVersionContainer{
+		uint32(v.Major), uint32(v.Minor), uint32(v.Patch),
+	})
+}
+
 type whatsmeowService struct {
 	instanceRepository instance_repository.InstanceRepository
 	authDB             *sql.DB
@@ -410,6 +426,7 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 		if err == nil {
 			store.DeviceProps.Version.Tertiary = proto.Uint32(uint32(version.Patch))
 		}
+		applyWAVersion(version)
 	} else {
 		// Try to fetch version from WhatsApp Web
 		webVersion, err := fetchWhatsAppWebVersion()
@@ -421,6 +438,7 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 			store.DeviceProps.Version.Primary = proto.Uint32(uint32(version.Major))
 			store.DeviceProps.Version.Secondary = proto.Uint32(uint32(version.Minor))
 			store.DeviceProps.Version.Tertiary = proto.Uint32(uint32(version.Patch))
+			applyWAVersion(version)
 		}
 	}
 
