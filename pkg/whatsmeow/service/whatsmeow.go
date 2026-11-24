@@ -176,6 +176,7 @@ type MyClient struct {
 	qrcodeCount        int
 	passkeyCeremony    *ceremony.Store
 	stopRequested      atomic.Bool
+	presenceOnce       sync.Once
 	qrRotationActive   atomic.Bool
 	stopSignal         chan struct{}
 }
@@ -265,7 +266,7 @@ func (w whatsmeowService) ReconnectClient(instanceId string) error {
 	// Limpar cache de userInfo para esta instância
 	if instance, err := w.instanceRepository.GetInstanceByID(instanceId); err == nil {
 		w.userInfoCache.Delete(instance.Token)
-		w.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] UserInfo cache cleared for token: %s", instanceId, instance.Token)
+		w.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] UserInfo cache cleared", instanceId)
 	}
 
 	// Passo 3: Atualizar status no banco
@@ -507,7 +508,6 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 		}
 	}
 
-	client.EnableAutoReconnect = false
 	client.AutoTrustIdentity = true
 
 	mycli := &MyClient{
@@ -544,6 +544,7 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 		passkeyCeremony:    w.passkeyCeremony,
 	}
 
+	configureTransportRecovery(client, &mycli.stopRequested)
 	mycli.eventHandlerID = mycli.WAClient.AddEventHandler(mycli.myEventHandler)
 
 	// Armazena o MyClient no map para permitir atualizações posteriores
@@ -617,7 +618,7 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 
 	}
 
-	// Removed auto-reconnect logic to prevent infinite loops
+	// whatsmeow owns transport retries; this loop only handles explicit teardown.
 
 	for {
 		select {
@@ -632,7 +633,7 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 
 			// Limpar cache de userInfo para esta instância
 			w.userInfoCache.Delete(cd.Instance.Token)
-			w.loggerWrapper.GetLogger(cd.Instance.Id).LogInfo("[%s] UserInfo cache cleared for token: %s", cd.Instance.Id, cd.Instance.Token)
+			w.loggerWrapper.GetLogger(cd.Instance.Id).LogInfo("[%s] UserInfo cache cleared", cd.Instance.Id)
 
 			cd.Instance.Connected = false
 
@@ -980,7 +981,7 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 			// the user's phone. When alwaysOnline is false we now send Unavailable instead.
 			var err error
 			if mycli.Instance.AlwaysOnline {
-				go schedulePresenceUpdates(mycli)
+				mycli.presenceOnce.Do(func() { go schedulePresenceUpdates(mycli) })
 
 				err = mycli.WAClient.SendPresence(context.Background(), types.PresenceAvailable)
 				if err != nil {
@@ -1026,7 +1027,7 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 
 		mycli.loggerWrapper.GetLogger(mycli.userID).LogInfo("[%s] Updating JID: %s in Instance: %s", mycli.userID, mycli.WAClient.Store.ID.String(), instance.Jid)
 
-		mycli.loggerWrapper.GetLogger(mycli.userID).LogInfo("[%s] Attempting to update instance in DB: %+v", mycli.userID, instance)
+		mycli.loggerWrapper.GetLogger(mycli.userID).LogInfo("[%s] Persisting paired instance", mycli.userID)
 		err = mycli.instanceRepository.Update(instance)
 		if err != nil {
 			mycli.loggerWrapper.GetLogger(mycli.userID).LogError("[%s] Error updating instance: %s", mycli.userID, err)
@@ -1887,13 +1888,14 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 	case *events.AppState:
 		mycli.loggerWrapper.GetLogger(mycli.userID).LogInfo("[%s] App state event received %+v", mycli.userID, evt)
 	case *events.LoggedOut:
+		mycli.stopTransportRecovery()
 		doWebhook = true
 		postMap["event"] = "LoggedOut"
 		mycli.loggerWrapper.GetLogger(mycli.userID).LogInfo("[%s] Logged out for reason %s", mycli.userID, evt.Reason.String())
 
 		// Limpar cache de userInfo para esta instância
 		mycli.userInfoCache.Delete(mycli.Instance.Token)
-		mycli.loggerWrapper.GetLogger(mycli.userID).LogInfo("[%s] UserInfo cache cleared for token: %s", mycli.userID, mycli.Instance.Token)
+		mycli.loggerWrapper.GetLogger(mycli.userID).LogInfo("[%s] UserInfo cache cleared", mycli.userID)
 
 		mycli.Instance.DisconnectReason = evt.Reason.String()
 		mycli.Instance.Connected = false
@@ -2013,7 +2015,7 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 
 		// Limpar cache de userInfo para esta instância
 		mycli.userInfoCache.Delete(mycli.Instance.Token)
-		mycli.loggerWrapper.GetLogger(mycli.userID).LogInfo("[%s] UserInfo cache cleared for token: %s", mycli.userID, mycli.Instance.Token)
+		mycli.loggerWrapper.GetLogger(mycli.userID).LogInfo("[%s] UserInfo cache cleared", mycli.userID)
 
 		mycli.Instance.DisconnectReason = evt.Reason.String()
 		mycli.Instance.Connected = false
@@ -2027,7 +2029,7 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 
 		// Limpar cache de userInfo para esta instância (mas não para reconexão automática)
 		mycli.userInfoCache.Delete(mycli.Instance.Token)
-		mycli.loggerWrapper.GetLogger(mycli.userID).LogInfo("[%s] UserInfo cache cleared for token: %s", mycli.userID, mycli.Instance.Token)
+		mycli.loggerWrapper.GetLogger(mycli.userID).LogInfo("[%s] UserInfo cache cleared", mycli.userID)
 
 		mycli.Instance.DisconnectReason = "Disconnected emitted because the websocket is closed by the server."
 		mycli.Instance.Connected = false
@@ -2036,18 +2038,9 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 			mycli.loggerWrapper.GetLogger(mycli.userID).LogError("[%s] Error updating instance: %s", mycli.Instance.Id, err)
 		}
 
-		// Reconnect established sessions only. An unpaired QR socket or an
-		// explicit cancellation must not resurrect the pending pairing flow.
-		if !mycli.stopRequested.Load() && mycli.WAClient != nil && mycli.WAClient.Store != nil && mycli.WAClient.Store.ID != nil {
-			go func(instanceID string) {
-				mycli.loggerWrapper.GetLogger(instanceID).LogInfo("[%s] Disconnected detected, restarting instance", instanceID)
-				if err := mycli.service.ReconnectClient(instanceID); err != nil {
-					mycli.loggerWrapper.GetLogger(instanceID).LogError("[%s] Failed to restart instance: %v", instanceID, err)
-				}
-			}(mycli.userID)
-		} else {
-			mycli.loggerWrapper.GetLogger(mycli.userID).LogInfo("[%s] Not reconnecting: pairing was cancelled/expired or no session is paired", mycli.userID)
-		}
+		// Do not reconstruct the instance here. Native transport recovery keeps
+		// the same device, webhook, subscriptions and event handler, and stops
+		// on explicit Disconnect/LoggedOut or when there is no paired session.
 	case *events.LabelEdit:
 		doWebhook = true
 		postMap["event"] = "LabelEdit"
@@ -2816,7 +2809,7 @@ func (w whatsmeowService) UpdateInstanceAdvancedSettings(instanceId string) erro
 }
 
 func (w whatsmeowService) ClearInstanceCache(instanceId string, token string) error {
-	w.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] Clearing instance cache - Token: %s", instanceId, token)
+	w.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] Clearing instance cache", instanceId)
 
 	// Limpar userInfoCache
 	w.userInfoCache.Delete(token)
