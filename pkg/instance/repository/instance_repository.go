@@ -23,6 +23,8 @@ type InstanceRepository interface {
 	GetInstanceByName(name string) (*instance_model.Instance, error)
 	Update(*instance_model.Instance) error
 	UpdateConnected(userId string, status bool, disconnectReason string) error
+	SetResumeOnStartup(instanceID string, enabled bool) error
+	GetStartupCandidates(clientName string) ([]*instance_model.Instance, error)
 	UpdateQrcode(userId string, qr string) error
 	UpdateProxy(userId string, proxy string) error
 	UpdateJid(userId string, jid string) error
@@ -102,6 +104,22 @@ func (i *instanceRepository) Update(instance *instance_model.Instance) error {
 
 func (i *instanceRepository) UpdateConnected(userId string, status bool, disconnectReason string) error {
 	return i.db.Model(&instance_model.Instance{}).Where("id = ?", userId).Update("connected", status).Update("disconnect_reason", disconnectReason).Error
+}
+
+func (i *instanceRepository) SetResumeOnStartup(instanceID string, enabled bool) error {
+	return i.db.Model(&instance_model.Instance{}).Where("id = ?", instanceID).
+		Update("resume_on_startup", enabled).Error
+}
+
+func (i *instanceRepository) GetStartupCandidates(clientName string) ([]*instance_model.Instance, error) {
+	var instances []*instance_model.Instance
+	query := i.db.Where("(resume_on_startup = ? OR (resume_on_startup IS NULL AND connected = ?))", true, true).
+		Where("trim(jid) <> ''")
+	if clientName != "" {
+		query = query.Where("client_name = ?", clientName)
+	}
+	err := query.Find(&instances).Error
+	return instances, err
 }
 
 func (i *instanceRepository) UpdateQrcode(userId string, qr string) error {

@@ -234,6 +234,8 @@ func (i instances) Connect(data *ConnectStruct, instance *instance_model.Instanc
 	instance.RabbitmqEnable = data.RabbitmqEnable
 	instance.NatsEnable = data.NatsEnable
 	instance.WebSocketEnable = data.WebSocketEnable
+	resume := true
+	instance.ResumeOnStartup = &resume
 
 	err := i.instanceRepository.Update(instance)
 	if err != nil {
@@ -300,49 +302,59 @@ func (i instances) Connect(data *ConnectStruct, instance *instance_model.Instanc
 }
 
 func (i instances) Reconnect(instance *instance_model.Instance) error {
-	_, err := i.ensureClientConnected(instance.Id)
-	if err != nil {
+	if err := i.instanceRepository.SetResumeOnStartup(instance.Id, true); err != nil {
 		return err
 	}
-
+	resume := true
+	instance.ResumeOnStartup = &resume
+	if client := i.clientPointer[instance.Id]; client != nil && client.IsConnected() && client.IsLoggedIn() {
+		return nil
+	}
 	return i.whatsmeowService.ReconnectClient(instance.Id)
 }
 
 func (i instances) Disconnect(instance *instance_model.Instance) (*instance_model.Instance, error) {
-	client, err := i.ensureClientConnected(instance.Id)
-	if err != nil {
+	// Persist the user's intent even with an offline/missing socket. Never
+	// start a client merely to stop it; keep webhook and subscriptions intact.
+	if err := i.instanceRepository.SetResumeOnStartup(instance.Id, false); err != nil {
 		return instance, err
 	}
-
-	if client.IsConnected() {
-		i.loggerWrapper.GetLogger(instance.Id).LogInfo("[%s] Stopping connection (logged in: %v)", instance.Id, client.IsLoggedIn())
-		instance.Events = ""
-		instance.Connected = false
-
-		if killChannel := i.killChannel[instance.Id]; killChannel != nil {
-			select {
-			case killChannel <- true:
-			case <-time.After(5 * time.Second):
-				client.Disconnect()
-			}
-		} else {
-			client.Disconnect()
-		}
-
-		if err := i.instanceRepository.Update(instance); err != nil {
-			return instance, err
-		}
-		return instance, nil
+	resume := false
+	instance.ResumeOnStartup = &resume
+	instance.Connected = false
+	instance.DisconnectReason = "Disconnected by user"
+	if client := i.clientPointer[instance.Id]; client != nil {
+		client.Disconnect() // also interrupts the native retry backoff
 	}
-
-	i.loggerWrapper.GetLogger(instance.Id).LogWarn("[%s] Ignoring disconnect as it was not connected", instance.Id)
+	if killChannel := i.killChannel[instance.Id]; killChannel != nil {
+		select {
+		case killChannel <- true:
+		case <-time.After(5 * time.Second):
+		}
+	}
+	if err := i.instanceRepository.UpdateConnected(instance.Id, false, instance.DisconnectReason); err != nil {
+		return instance, err
+	}
 	return instance, nil
 }
 
 func (i instances) Logout(instance *instance_model.Instance) (*instance_model.Instance, error) {
-	client, err := i.ensureClientConnected(instance.Id)
-	if err != nil {
+	if err := i.instanceRepository.SetResumeOnStartup(instance.Id, false); err != nil {
 		return instance, err
+	}
+	resume := false
+	instance.ResumeOnStartup = &resume
+	client := i.clientPointer[instance.Id]
+	if client == nil {
+		return instance, errors.New("no active client; automatic restoration disabled")
+	}
+	if !client.IsConnected() {
+		client.Disconnect() // cancel a pending native retry, even without a socket
+		instance.Connected = false
+		if err := i.instanceRepository.UpdateConnected(instance.Id, false, "Logout requested while offline"); err != nil {
+			return instance, err
+		}
+		return instance, errors.New("client offline; recovery stopped, remote unlink not confirmed")
 	}
 
 	if client.IsLoggedIn() && client.IsConnected() {

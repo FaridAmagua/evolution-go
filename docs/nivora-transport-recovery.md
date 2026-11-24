@@ -33,11 +33,40 @@ They do not connect to WhatsApp, use production credentials, send messages or
 start paid searches. They cover paired/unpaired devices, initial outages, native
 backoff, explicit stop/logout policy and deleted stores.
 
-Before production: validate socket recovery with a dedicated test account.
-Separately address the pre-existing shared map
-accesses and recovery across a full process restart. Do not enable startup scans
-of every disconnected instance without a persisted desired-state flag: that
-would also restart deliberately stopped instances.
+## Persisted restart intent
+
+`instances.resume_on_startup` is a nullable, server-owned boolean added by the
+existing GORM migration. It is not exposed or writable through public JSON.
+
+- Explicit connect/reconnect enables it; manual disconnect/logout disables it.
+- A temporary socket error updates observed status without erasing intent.
+- A revoked session disables restoration.
+- Legacy NULL rows resume only if their previous observed status was connected.
+- Startup filters by client name and requires a stored device JID. It restores
+  only that exact saved device, never an older same-phone device or a new QR.
+- Authentication database errors remain distinct from missing/revoked sessions.
+- Offline disconnect does not start a client and preserves webhook/subscriptions.
+- Offline logout stops recovery but does not claim remote unlink was confirmed.
+
+PostgreSQL checks include nullable migration of existing rows, isolation between
+client names, intent surviving a fresh repository/connection, a real restart of
+the disposable PostgreSQL container (before/after probe), and the existing shared
+authentication-pool concurrency integration test. All use synthetic fixtures.
+
+Reproduce with `EVOGO_RECOVERY_TEST_DSN` pointing only to the disposable
+`evogo_recovery_test` database. The test refuses other database names and hosts.
+Run `TestStartupIntentAcrossActualPostgresRestart` with
+`EVOGO_RECOVERY_RESTART_PHASE=before`, restart only that test PostgreSQL, then run
+with `EVOGO_RECOVERY_RESTART_PHASE=after`. The after phase removes its own schema.
+The ordinary tests use temporary unique schemas and clean up automatically.
+
+Before production: validate socket recovery with a dedicated test account and
+finish the pre-existing shared-map/lifecycle ownership audit. The global map
+accesses are not made safe by these tests. In particular, a delayed client start
+versus manual cancellation/replacement still needs generation-aware ownership.
+Do not infer from a passing race detector on these scenarios that every runtime
+interleaving has been covered. Back up production before the additive migration;
+rollback to an older binary can leave the unused nullable column in place.
 
 Pinned upstream contract:
 https://github.com/tulir/whatsmeow/blob/b572e5bcb92b/client.go

@@ -150,6 +150,8 @@ func (repository *recoveryRepository) UpdateConnected(_ string, connected bool, 
 	return nil
 }
 
+func (repository *recoveryRepository) SetResumeOnStartup(_ string, _ bool) error { return nil }
+
 type recoveryObserver struct {
 	WhatsmeowService
 	reconnects atomic.Int32

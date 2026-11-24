@@ -8,16 +8,19 @@ import (
 )
 
 type Instance struct {
-	Id               string    `json:"id" gorm:"type:uuid;primaryKey"`
-	Name             string    `json:"name"`
-	Token            string    `json:"token" gorm:"unique"`
-	Webhook          string    `json:"webhook"`
-	RabbitmqEnable   string    `json:"rabbitmqEnable"`
-	WebSocketEnable  string    `json:"websocketEnable"`
-	NatsEnable       string    `json:"natsEnable"`
-	Jid              string    `json:"jid" gorm:"column:jid"`
-	Qrcode           string    `json:"qrcode" gorm:"type:text"`
-	Connected        bool      `json:"connected"`
+	Id              string `json:"id" gorm:"type:uuid;primaryKey"`
+	Name            string `json:"name"`
+	Token           string `json:"token" gorm:"unique"`
+	Webhook         string `json:"webhook"`
+	RabbitmqEnable  string `json:"rabbitmqEnable"`
+	WebSocketEnable string `json:"websocketEnable"`
+	NatsEnable      string `json:"natsEnable"`
+	Jid             string `json:"jid" gorm:"column:jid"`
+	Qrcode          string `json:"qrcode" gorm:"type:text"`
+	Connected       bool   `json:"connected"`
+	// Server-owned intent, separate from the most recent socket observation.
+	// NULL preserves legacy behavior: only previously connected rows resume.
+	ResumeOnStartup  *bool     `json:"-" gorm:"column:resume_on_startup"`
 	Expiration       int64     `json:"expiration"`
 	DisconnectReason string    `json:"disconnect_reason"`
 	Events           string    `json:"events"`

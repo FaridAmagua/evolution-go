@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image/png"
 	"io"
@@ -198,6 +199,7 @@ type ClientData struct {
 	Subscriptions []string
 	Phone         string
 	IsProxy       bool
+	RestoreOnly   bool
 }
 
 type Values struct {
@@ -287,7 +289,7 @@ func (w whatsmeowService) ReconnectClient(instanceId string) error {
 
 	// Passo 5: Iniciar nova instância como se fosse a primeira vez
 	w.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] Starting fresh instance", instanceId)
-	return w.StartInstance(instanceId)
+	return w.startInstance(instanceId, true)
 }
 
 func (w whatsmeowService) ForceUpdateJid(instanceId string, number string) error {
@@ -383,7 +385,20 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 		return
 	}
 
-	if cd.Instance.Jid != "" {
+	if cd.RestoreOnly {
+		deviceStore, err = lookupRestoreDevice(context.Background(), cd.Instance.Jid, container.GetDevice)
+		if err != nil {
+			w.loggerWrapper.GetLogger(cd.Instance.Id).LogWarn("[%s] Automatic restore stopped: %v", cd.Instance.Id, err)
+			reason := "Saved session check unavailable"
+			if errors.Is(err, errRestoreNeedsRelink) {
+				reason = "Saved session unavailable; relink required"
+			}
+			if updateErr := w.instanceRepository.UpdateConnected(cd.Instance.Id, false, reason); updateErr != nil {
+				w.loggerWrapper.GetLogger(cd.Instance.Id).LogError("[%s] Failed to persist restore failure: %v", cd.Instance.Id, updateErr)
+			}
+			return
+		}
+	} else if cd.Instance.Jid != "" {
 		jid, _ := utils.ParseJID(cd.Instance.Jid)
 		w.loggerWrapper.GetLogger(cd.Instance.Id).LogInfo("[%s] Jid found. Getting device store for jid: %s", cd.Instance.Id, jid)
 		deviceStore, err = container.GetDevice(context.Background(), jid)
@@ -1889,6 +1904,11 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 		mycli.loggerWrapper.GetLogger(mycli.userID).LogInfo("[%s] App state event received %+v", mycli.userID, evt)
 	case *events.LoggedOut:
 		mycli.stopTransportRecovery()
+		resume := false
+		mycli.Instance.ResumeOnStartup = &resume
+		if err := mycli.instanceRepository.SetResumeOnStartup(mycli.userID, false); err != nil {
+			mycli.loggerWrapper.GetLogger(mycli.userID).LogError("[%s] Failed to persist revoked session intent: %v", mycli.userID, err)
+		}
 		doWebhook = true
 		postMap["event"] = "LoggedOut"
 		mycli.loggerWrapper.GetLogger(mycli.userID).LogInfo("[%s] Logged out for reason %s", mycli.userID, evt.Reason.String())
@@ -2374,9 +2394,23 @@ func (w *whatsmeowService) sendToQueueOrWebhook(instance *instance_model.Instanc
 }
 
 func (w whatsmeowService) StartInstance(instanceId string) error {
+	return w.startInstance(instanceId, false)
+}
+
+func (w whatsmeowService) startInstance(instanceId string, restoreOnly bool) error {
 	instance, err := w.instanceRepository.GetInstanceByID(instanceId)
 	if err != nil {
 		return err
+	}
+	if restoreOnly && instance.ResumeOnStartup != nil && !*instance.ResumeOnStartup {
+		return fmt.Errorf("automatic restoration was disabled for this instance")
+	}
+	if !restoreOnly {
+		if err := w.instanceRepository.SetResumeOnStartup(instanceId, true); err != nil {
+			return err
+		}
+		resume := true
+		instance.ResumeOnStartup = &resume
 	}
 
 	if instance.Proxy == "" && w.config.ProxyHost != "" && w.config.ProxyPort != "" && w.config.ProxyUsername != "" && w.config.ProxyPassword != "" {
@@ -2442,6 +2476,7 @@ func (w whatsmeowService) StartInstance(instanceId string) error {
 		Subscriptions: subscribedEvents,
 		Phone:         "",
 		IsProxy:       false,
+		RestoreOnly:   restoreOnly,
 	}
 
 	if instance.Proxy != "" {
@@ -2463,22 +2498,11 @@ func (w whatsmeowService) StartInstance(instanceId string) error {
 }
 
 func (w whatsmeowService) ConnectOnStartup(clientName string) {
-	w.loggerWrapper.GetLogger(clientName).LogInfo("Connecting all instances on startup")
-	var instances []*instance_model.Instance
-	var err error
-
-	if clientName != "" {
-		instances, err = w.instanceRepository.GetAllConnectedInstancesByClientName(clientName)
-		if err != nil {
-			w.loggerWrapper.GetLogger(clientName).LogError("[%s] Error getting all connected instances: %s", clientName, err)
-			return
-		}
-	} else {
-		instances, err = w.instanceRepository.GetAllConnectedInstances()
-		if err != nil {
-			w.loggerWrapper.GetLogger(clientName).LogError("[%s] Error getting all connected instances: %s", clientName, err)
-			return
-		}
+	w.loggerWrapper.GetLogger(clientName).LogInfo("Restoring opted-in saved sessions on startup")
+	instances, err := w.instanceRepository.GetStartupCandidates(clientName)
+	if err != nil {
+		w.loggerWrapper.GetLogger(clientName).LogError("[%s] Error loading startup candidates: %v", clientName, err)
+		return
 	}
 
 	w.loggerWrapper.GetLogger(clientName).LogInfo("[%s] Found %d connected instances", clientName, len(instances))
@@ -2486,7 +2510,7 @@ func (w whatsmeowService) ConnectOnStartup(clientName string) {
 	for _, instance := range instances {
 		w.loggerWrapper.GetLogger(clientName).LogInfo("[%s] Starting client for user '%s'", clientName, instance.Id)
 
-		err := w.StartInstance(instance.Id)
+		err := w.startInstance(instance.Id, true)
 		if err != nil {
 			w.loggerWrapper.GetLogger(clientName).LogError("[%s] Error starting client: %s", clientName, err)
 		}
