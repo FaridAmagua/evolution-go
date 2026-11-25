@@ -1,4 +1,4 @@
-# Transport recovery — local candidate, not deployed
+# Transport recovery — production rollout, 25 November 2026
 
 This change keeps temporary websocket recovery in the pinned whatsmeow client,
 instead of tearing down and recreating the Evolution instance from every
@@ -62,7 +62,7 @@ Run `TestStartupIntentAcrossActualPostgresRestart` with
 with `EVOGO_RECOVERY_RESTART_PHASE=after`. The after phase removes its own schema.
 The ordinary tests use temporary unique schemas and clean up automatically.
 
-## Attempt ownership (25 November, local only)
+## Attempt ownership (25 November)
 
 - Reserve one owner synchronously before launching any asynchronous start.
   Duplicate starts return a conflict, without replacing the stop signal.
@@ -89,7 +89,7 @@ Final local candidate: `go test -race -count=3 ./...`, full binary build and
 Docker container with no production credentials. Optional PostgreSQL/PDF tests
 remain conditional; the earlier dedicated PostgreSQL checks are described above.
 
-Before production: validate socket recovery with a dedicated test account.
+Use a dedicated test account for future deliberate network-fault simulations.
 These tests do not prove all native network interleavings or webhook delivery
 ordering. Runtime settings/global device-property writes are a separate legacy
 concurrency concern, not a guarantee supplied by map-slot locking. Do not infer
@@ -97,10 +97,29 @@ from a passing race detector on these scenarios that every runtime interleaving
 has been covered. Back up production before the additive migration; rollback to
 an older binary can leave the unused nullable column in place.
 
-The personal production device was observed connected with its exact auth record
-on 25 November at 09:42 UTC. No production session was disconnected, replaced or
-restarted while developing this candidate. Deploying the provider needs a planned
-restart; do not restart the currently working account merely to test this patch.
+## Production verification
+
+The authorized rollout deployed provider code `102efe5` using the immutable image
+`ghcr.io/faridamagua/evolution-go@sha256:6f7cc813de165b11b4670c385610f336a88e83a60204917f70921c05293a0661`.
+The Nivora interface guards were deployed from `146b52d`.
+
+- A fresh database archive and the previous Compose/image configuration were
+  backed up on the production host; archive listing and checksum were verified.
+- Only the provider image changed. The database volume, credentials, instance
+  identity and personal webhook were preserved.
+- After the planned restarts the personal device restored its exact saved auth
+  record without another linking code. Observed connected state and durable
+  resume intent were both true; the final container restart count was zero.
+- Nivora independently observed the personal channel connected after rollout;
+  the public web endpoint returned HTTP 200. The unpaired commercial channel was
+  not silently started or linked.
+- One authorized developer test traversed Nivora → Bot-Mateo → WhatsApp. Its
+  provider ID matched a persisted Delivered receipt, not merely a send response.
+  No Apify search was launched for the test.
+
+Native read receipts were not claimed when only Delivered was available. Saved
+reports with uncertain earlier sends were not blindly retried. Long-term
+stability and a deliberate transport fault are not proved by this smoke test.
 
 Pinned upstream contract:
 https://github.com/tulir/whatsmeow/blob/b572e5bcb92b/client.go
