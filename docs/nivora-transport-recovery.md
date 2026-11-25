@@ -60,13 +60,45 @@ Run `TestStartupIntentAcrossActualPostgresRestart` with
 with `EVOGO_RECOVERY_RESTART_PHASE=after`. The after phase removes its own schema.
 The ordinary tests use temporary unique schemas and clean up automatically.
 
-Before production: validate socket recovery with a dedicated test account and
-finish the pre-existing shared-map/lifecycle ownership audit. The global map
-accesses are not made safe by these tests. In particular, a delayed client start
-versus manual cancellation/replacement still needs generation-aware ownership.
-Do not infer from a passing race detector on these scenarios that every runtime
-interleaving has been covered. Back up production before the additive migration;
-rollback to an older binary can leave the unused nullable column in place.
+## Attempt ownership (25 November, local only)
+
+- Reserve one owner synchronously before launching any asynchronous start.
+  Duplicate starts return a conflict, without replacing the stop signal.
+- Capture each owner's cancellation context/signal; old QR workers cannot look
+  up or stop a replacement by instance ID. QR waits are interruptible.
+- Retain ownership until native callbacks and QR workers have drained. Map
+  cleanup removes only the pointer/channel owned by that attempt.
+- Protect every production access to the shared client maps. Message sends hold
+  one client reference instead of repeatedly looking up a changing map slot.
+- Serialize incompatible HTTP actions per instance with rejection (409), not a
+  queue. Other instances/channels remain independent.
+- A read/send request may restore only an opted-in exact saved session. It cannot
+  undo a manual disconnect or open an unsolicited QR pairing.
+- QR expiry never calls remote Logout. A PairSuccess racing cancellation still
+  persists the exact device JID without re-enabling recovery or claiming the
+  cancelled socket is connected. Teardown no longer fabricates LoggedOut.
+
+Tests cover concurrent starts, stop-before-publication, duplicate actions before
+DB writes, independent channels, stale timeout signals, cancellable QR rotation,
+pair success racing cancellation, and preservation of manual-stop intent.
+
+Final local candidate: `go test -race -count=3 ./...`, full binary build and
+`git diff --check` passed on 25 November. Tests/build used a network-isolated
+Docker container with no production credentials. Optional PostgreSQL/PDF tests
+remain conditional; the earlier dedicated PostgreSQL checks are described above.
+
+Before production: validate socket recovery with a dedicated test account.
+These tests do not prove all native network interleavings or webhook delivery
+ordering. Runtime settings/global device-property writes are a separate legacy
+concurrency concern, not a guarantee supplied by map-slot locking. Do not infer
+from a passing race detector on these scenarios that every runtime interleaving
+has been covered. Back up production before the additive migration; rollback to
+an older binary can leave the unused nullable column in place.
+
+The personal production device was observed connected with its exact auth record
+on 25 November at 09:42 UTC. No production session was disconnected, replaced or
+restarted while developing this candidate. Deploying the provider needs a planned
+restart; do not restart the currently working account merely to test this patch.
 
 Pinned upstream contract:
 https://github.com/tulir/whatsmeow/blob/b572e5bcb92b/client.go

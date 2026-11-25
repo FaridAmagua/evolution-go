@@ -1,6 +1,8 @@
 package instance_handler
 
 import (
+	"errors"
+	whatsmeow_service "github.com/evolution-foundation/evolution-go/pkg/whatsmeow/service"
 	"net/http"
 	"time"
 
@@ -52,7 +54,7 @@ func (i *instanceHandler) Create(ctx *gin.Context) {
 	var data *instance_service.CreateStruct
 	err := ctx.ShouldBindJSON(&data)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		ctx.JSON(instanceErrorStatus(err, http.StatusBadRequest), gin.H{"error": err.Error()})
 		return
 	}
 
@@ -99,7 +101,7 @@ func (i *instanceHandler) Create(ctx *gin.Context) {
 
 	createdInstance, err := i.instanceService.Create(data)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ctx.JSON(instanceErrorStatus(err, http.StatusInternalServerError), gin.H{"error": err.Error()})
 		return
 	}
 
@@ -129,13 +131,13 @@ func (i *instanceHandler) Connect(ctx *gin.Context) {
 	var data *instance_service.ConnectStruct
 	err := ctx.ShouldBindBodyWithJSON(&data)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		ctx.JSON(instanceErrorStatus(err, http.StatusBadRequest), gin.H{"error": err.Error()})
 		return
 	}
 
 	instance, jid, eventString, err := i.instanceService.Connect(data, instance)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ctx.JSON(instanceErrorStatus(err, http.StatusInternalServerError), gin.H{"error": err.Error()})
 		return
 	}
 
@@ -170,7 +172,7 @@ func (i *instanceHandler) Reconnect(ctx *gin.Context) {
 
 	err := i.instanceService.Reconnect(instance)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ctx.JSON(instanceErrorStatus(err, http.StatusInternalServerError), gin.H{"error": err.Error()})
 		return
 	}
 
@@ -197,7 +199,7 @@ func (i *instanceHandler) Disconnect(ctx *gin.Context) {
 
 	updateInstance, err := i.instanceService.Disconnect(instance)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ctx.JSON(instanceErrorStatus(err, http.StatusInternalServerError), gin.H{"error": err.Error()})
 		return
 	}
 
@@ -226,7 +228,7 @@ func (i *instanceHandler) Logout(ctx *gin.Context) {
 
 	updateInstance, err := i.instanceService.Logout(instance)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		ctx.JSON(instanceErrorStatus(err, http.StatusBadRequest), gin.H{"error": err.Error()})
 		return
 	}
 
@@ -255,7 +257,7 @@ func (i *instanceHandler) Status(ctx *gin.Context) {
 
 	status, err := i.instanceService.Status(instance)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		ctx.JSON(instanceErrorStatus(err, http.StatusBadRequest), gin.H{"error": err.Error()})
 		return
 	}
 
@@ -282,7 +284,7 @@ func (i *instanceHandler) Qr(ctx *gin.Context) {
 
 	qrcode, err := i.instanceService.GetQr(instance)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		ctx.JSON(instanceErrorStatus(err, http.StatusBadRequest), gin.H{"error": err.Error()})
 		return
 	}
 
@@ -312,7 +314,7 @@ func (i *instanceHandler) Pair(ctx *gin.Context) {
 	var data *instance_service.PairStruct
 	err := ctx.ShouldBindBodyWithJSON(&data)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		ctx.JSON(instanceErrorStatus(err, http.StatusBadRequest), gin.H{"error": err.Error()})
 		return
 	}
 
@@ -323,7 +325,7 @@ func (i *instanceHandler) Pair(ctx *gin.Context) {
 
 	pairingCode, err := i.instanceService.Pair(data, instance)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ctx.JSON(instanceErrorStatus(err, http.StatusInternalServerError), gin.H{"error": err.Error()})
 		return
 	}
 
@@ -342,7 +344,7 @@ func (i *instanceHandler) Pair(ctx *gin.Context) {
 func (i *instanceHandler) All(ctx *gin.Context) {
 	instances, err := i.instanceService.GetAll()
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ctx.JSON(instanceErrorStatus(err, http.StatusInternalServerError), gin.H{"error": err.Error()})
 		return
 	}
 
@@ -370,7 +372,7 @@ func (i *instanceHandler) Info(ctx *gin.Context) {
 
 	instance, err := i.instanceService.Info(instanceId)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ctx.JSON(instanceErrorStatus(err, http.StatusInternalServerError), gin.H{"error": err.Error()})
 		return
 	}
 
@@ -398,7 +400,7 @@ func (i *instanceHandler) Delete(ctx *gin.Context) {
 
 	err := i.instanceService.Delete(instanceId)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ctx.JSON(instanceErrorStatus(err, http.StatusInternalServerError), gin.H{"error": err.Error()})
 		return
 	}
 
@@ -428,7 +430,7 @@ func (i *instanceHandler) SetProxy(ctx *gin.Context) {
 	var data *instance_service.SetProxyStruct
 	err := ctx.ShouldBindBodyWithJSON(&data)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		ctx.JSON(instanceErrorStatus(err, http.StatusBadRequest), gin.H{"error": err.Error()})
 		return
 	}
 
@@ -445,7 +447,7 @@ func (i *instanceHandler) SetProxy(ctx *gin.Context) {
 
 	err = i.instanceService.SetProxyFromStruct(instanceId, data)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ctx.JSON(instanceErrorStatus(err, http.StatusInternalServerError), gin.H{"error": err.Error()})
 		return
 	}
 
@@ -480,7 +482,7 @@ func (i *instanceHandler) DeleteProxy(ctx *gin.Context) {
 
 	err := i.instanceService.RemoveProxy(instanceId)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ctx.JSON(instanceErrorStatus(err, http.StatusInternalServerError), gin.H{"error": err.Error()})
 		return
 	}
 
@@ -510,7 +512,7 @@ func (i *instanceHandler) ForceReconnect(ctx *gin.Context) {
 	var data *instance_service.ForceReconnectStruct
 	err := ctx.ShouldBindBodyWithJSON(&data)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		ctx.JSON(instanceErrorStatus(err, http.StatusBadRequest), gin.H{"error": err.Error()})
 		return
 	}
 
@@ -524,7 +526,7 @@ func (i *instanceHandler) ForceReconnect(ctx *gin.Context) {
 
 	err = i.instanceService.ForceReconnect(instanceId, number)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ctx.JSON(instanceErrorStatus(err, http.StatusInternalServerError), gin.H{"error": err.Error()})
 		return
 	}
 
@@ -657,4 +659,11 @@ func (h *instanceHandler) UpdateAdvancedSettings(c *gin.Context) {
 
 func NewInstanceHandler(instanceService instance_service.InstanceService, config *config.Config) InstanceHandler {
 	return &instanceHandler{instanceService: instanceService, config: config}
+}
+
+func instanceErrorStatus(err error, fallback int) int {
+	if errors.Is(err, whatsmeow_service.ErrClientBusy) {
+		return http.StatusConflict
+	}
+	return fallback
 }

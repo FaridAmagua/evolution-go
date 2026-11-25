@@ -3,6 +3,7 @@ package label_service
 import (
 	"context"
 	"errors"
+	"github.com/evolution-foundation/evolution-go/pkg/clientstate"
 	"time"
 
 	instance_model "github.com/evolution-foundation/evolution-go/pkg/instance/model"
@@ -50,12 +51,12 @@ type EditLabelStruct struct {
 }
 
 func (l *labelService) ensureClientConnected(instanceId string) (*whatsmeow.Client, error) {
-	client := l.clientPointer[instanceId]
+	client := clientstate.Get(l.clientPointer, instanceId)
 	l.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] Checking client connection status - Client exists: %v", instanceId, client != nil)
 
 	if client == nil {
 		l.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] No client found, attempting to start new instance", instanceId)
-		err := l.whatsmeowService.StartInstance(instanceId)
+		err := l.whatsmeowService.RestoreInstance(instanceId)
 		if err != nil {
 			l.loggerWrapper.GetLogger(instanceId).LogError("[%s] Failed to start instance: %v", instanceId, err)
 			return nil, errors.New("no active session found")
@@ -64,7 +65,7 @@ func (l *labelService) ensureClientConnected(instanceId string) (*whatsmeow.Clie
 		l.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] Instance started, waiting 2 seconds...", instanceId)
 		time.Sleep(2 * time.Second)
 
-		client = l.clientPointer[instanceId]
+		client = clientstate.Get(l.clientPointer, instanceId)
 		l.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] Checking new client - Exists: %v, Connected: %v",
 			instanceId,
 			client != nil,

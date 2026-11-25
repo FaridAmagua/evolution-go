@@ -3,6 +3,7 @@ package chat_service
 import (
 	"context"
 	"errors"
+	"github.com/evolution-foundation/evolution-go/pkg/clientstate"
 	"time"
 
 	instance_model "github.com/evolution-foundation/evolution-go/pkg/instance/model"
@@ -40,12 +41,12 @@ type HistorySyncRequestStruct struct {
 }
 
 func (c *chatService) ensureClientConnected(instanceId string) (*whatsmeow.Client, error) {
-	client := c.clientPointer[instanceId]
+	client := clientstate.Get(c.clientPointer, instanceId)
 	c.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] Checking client connection status - Client exists: %v", instanceId, client != nil)
 
 	if client == nil {
 		c.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] No client found, attempting to start new instance", instanceId)
-		err := c.whatsmeowService.StartInstance(instanceId)
+		err := c.whatsmeowService.RestoreInstance(instanceId)
 		if err != nil {
 			c.loggerWrapper.GetLogger(instanceId).LogError("[%s] Failed to start instance: %v", instanceId, err)
 			return nil, errors.New("no active session found")
@@ -54,7 +55,7 @@ func (c *chatService) ensureClientConnected(instanceId string) (*whatsmeow.Clien
 		c.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] Instance started, waiting 2 seconds...", instanceId)
 		time.Sleep(2 * time.Second)
 
-		client = c.clientPointer[instanceId]
+		client = clientstate.Get(c.clientPointer, instanceId)
 		c.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] Checking new client - Exists: %v, Connected: %v",
 			instanceId,
 			client != nil,

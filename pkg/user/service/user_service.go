@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/evolution-foundation/evolution-go/pkg/clientstate"
 	"io"
 	"net/http"
 	"time"
@@ -109,12 +110,12 @@ type PrivacyStruct struct {
 }
 
 func (u *userService) ensureClientConnected(instanceId string) (*whatsmeow.Client, error) {
-	client := u.clientPointer[instanceId]
+	client := clientstate.Get(u.clientPointer, instanceId)
 	u.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] Checking client connection status - Client exists: %v", instanceId, client != nil)
 
 	if client == nil {
 		u.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] No client found, attempting to start new instance", instanceId)
-		err := u.whatsmeowService.StartInstance(instanceId)
+		err := u.whatsmeowService.RestoreInstance(instanceId)
 		if err != nil {
 			u.loggerWrapper.GetLogger(instanceId).LogError("[%s] Failed to start instance: %v", instanceId, err)
 			return nil, errors.New("no active session found")
@@ -123,7 +124,7 @@ func (u *userService) ensureClientConnected(instanceId string) (*whatsmeow.Clien
 		u.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] Instance started, waiting 2 seconds...", instanceId)
 		time.Sleep(2 * time.Second)
 
-		client = u.clientPointer[instanceId]
+		client = clientstate.Get(u.clientPointer, instanceId)
 		u.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] Checking new client - Exists: %v, Connected: %v",
 			instanceId,
 			client != nil,

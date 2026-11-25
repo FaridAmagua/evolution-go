@@ -180,6 +180,7 @@ func recoveryEventClient(t *testing.T) (*MyClient, *recoveryRepository, *recover
 		killChannel: map[string]chan bool{"recovery-test": make(chan bool, 1)},
 	}
 	configureTransportRecovery(mycli.WAClient, &mycli.stopRequested)
+	mycli.ownKill = mycli.killChannel[mycli.userID]
 	return mycli, repository, observer
 }
 

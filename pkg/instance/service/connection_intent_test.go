@@ -2,6 +2,7 @@ package instance_service
 
 import (
 	"errors"
+	"github.com/evolution-foundation/evolution-go/pkg/clientstate"
 	"testing"
 
 	"github.com/evolution-foundation/evolution-go/pkg/config"
@@ -40,9 +41,12 @@ type intentTransport struct {
 	whatsmeow_service.WhatsmeowService
 	starts     int
 	reconnects int
+	pending    bool
 }
 
-func (s *intentTransport) ReconnectClient(_ string) error { s.reconnects++; return nil }
+func (s *intentTransport) ReconnectClient(_ string) error  { s.reconnects++; return nil }
+func (s *intentTransport) StopClient(_ string) error       { return nil }
+func (s *intentTransport) PairingInProgress(_ string) bool { return s.pending }
 
 func (s *intentTransport) StartInstance(_ string) error {
 	s.starts++
@@ -124,5 +128,44 @@ func TestExplicitReconnectCanResumeAnOfflineInstance(t *testing.T) {
 	}
 	if repo.resume == nil || !*repo.resume || transport.starts != 0 || transport.reconnects != 1 {
 		t.Fatal("explicit reconnect did not restore the user's intent through the reconnect path")
+	}
+}
+
+func TestConcurrentUserActionsAreRejectedBeforeDatabaseOrProviderWrites(t *testing.T) {
+	repo, transport := &intentRepository{}, &intentTransport{}
+	service := instances{instanceRepository: repo, whatsmeowService: transport}
+	instance := &instance_model.Instance{Id: "same-channel"}
+	release, ok := clientstate.TryOperation(instance.Id)
+	if !ok {
+		t.Fatal("could not set up first action")
+	}
+	defer release()
+	if err := service.Reconnect(instance); err != whatsmeow_service.ErrClientBusy {
+		t.Fatal("second reconnect was not rejected")
+	}
+	if _, err := service.Disconnect(instance); err != whatsmeow_service.ErrClientBusy {
+		t.Fatal("overlapping disconnect was not rejected")
+	}
+	if _, err := service.Logout(instance); err != whatsmeow_service.ErrClientBusy {
+		t.Fatal("overlapping logout was not rejected")
+	}
+	if _, _, _, err := service.Connect(&ConnectStruct{}, instance); err != whatsmeow_service.ErrClientBusy {
+		t.Fatal("overlapping connect was not rejected")
+	}
+	if repo.resume != nil || transport.starts != 0 || transport.reconnects != 0 {
+		t.Fatal("rejected action made changes")
+	}
+}
+
+func TestNewConnectCannotChangeSettingsOfAnExistingPairing(t *testing.T) {
+	repo, transport := &intentRepository{}, &intentTransport{pending: true}
+	service := instances{instanceRepository: repo, whatsmeowService: transport}
+	instance := &instance_model.Instance{Id: "pairing-channel", Webhook: "https://example.invalid/original"}
+	_, _, _, err := service.Connect(&ConnectStruct{WebhookUrl: "https://example.invalid/replacement"}, instance)
+	if err != whatsmeow_service.ErrClientBusy {
+		t.Fatalf("got %v", err)
+	}
+	if instance.Webhook != "https://example.invalid/original" || repo.resume != nil {
+		t.Fatal("rejected connect overwrote pairing settings")
 	}
 }

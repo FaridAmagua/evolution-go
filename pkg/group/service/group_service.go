@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/evolution-foundation/evolution-go/pkg/clientstate"
 	"io"
 	"net/http"
 	"strings"
@@ -117,12 +118,12 @@ type UpdateGroupRequestParticipantsStruct struct {
 }
 
 func (g *groupService) ensureClientConnected(instanceId string) (*whatsmeow.Client, error) {
-	client := g.clientPointer[instanceId]
+	client := clientstate.Get(g.clientPointer, instanceId)
 	g.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] Checking client connection status - Client exists: %v", instanceId, client != nil)
 
 	if client == nil {
 		g.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] No client found, attempting to start new instance", instanceId)
-		err := g.whatsmeowService.StartInstance(instanceId)
+		err := g.whatsmeowService.RestoreInstance(instanceId)
 		if err != nil {
 			g.loggerWrapper.GetLogger(instanceId).LogError("[%s] Failed to start instance: %v", instanceId, err)
 			return nil, errors.New("no active session found")
@@ -131,7 +132,7 @@ func (g *groupService) ensureClientConnected(instanceId string) (*whatsmeow.Clie
 		g.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] Instance started, waiting 2 seconds...", instanceId)
 		time.Sleep(2 * time.Second)
 
-		client = g.clientPointer[instanceId]
+		client = clientstate.Get(g.clientPointer, instanceId)
 		g.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] Checking new client - Exists: %v, Connected: %v",
 			instanceId,
 			client != nil,
