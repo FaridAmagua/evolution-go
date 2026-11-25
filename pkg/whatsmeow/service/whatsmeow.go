@@ -2330,16 +2330,8 @@ func (w whatsmeowService) startInstance(instanceId string, restoreOnly bool) err
 	if err != nil {
 		return err
 	}
-	if restoreOnly && ((instance.ResumeOnStartup != nil && !*instance.ResumeOnStartup) ||
-		(instance.ResumeOnStartup == nil && !instance.Connected)) {
-		return fmt.Errorf("automatic restoration was disabled for this instance")
-	}
-	if !restoreOnly {
-		if err := w.instanceRepository.SetResumeOnStartup(instanceId, true); err != nil {
-			return err
-		}
-		resume := true
-		instance.ResumeOnStartup = &resume
+	if err := prepareResumeIntent(instance, restoreOnly, w.instanceRepository); err != nil {
+		return err
 	}
 
 	if instance.Proxy == "" && w.config.ProxyHost != "" && w.config.ProxyPort != "" && w.config.ProxyUsername != "" && w.config.ProxyPassword != "" {

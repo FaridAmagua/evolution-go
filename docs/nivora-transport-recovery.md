@@ -42,6 +42,8 @@ existing GORM migration. It is not exposed or writable through public JSON.
 - A temporary socket error updates observed status without erasing intent.
 - A revoked session disables restoration.
 - Legacy NULL rows resume only if their previous observed status was connected.
+- The first eligible legacy restore persists explicit opt-in before its worker
+  starts, so a later outage followed by a process restart does not lose intent.
 - Startup filters by client name and requires a stored device JID. It restores
   only that exact saved device, never an older same-phone device or a new QR.
 - Authentication database errors remain distinct from missing/revoked sessions.
